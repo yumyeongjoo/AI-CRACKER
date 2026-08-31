@@ -1,6 +1,8 @@
 import streamlit as st
 
 from config.settings import APP_NAME, APP_VERSION
+from data.scenarios import get_scenario
+from models.risk_model import calculate_transaction_risk
 
 
 # ==================================================
@@ -171,8 +173,12 @@ st.markdown(
     margin-top: 0.2rem;
 }
 
-.back-button {
-    margin-bottom: 1rem;
+.risk-card {
+    background-color: white;
+    border-radius: 18px;
+    padding: 1.5rem;
+    margin-top: 1rem;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.06);
 }
 
 </style>
@@ -190,6 +196,9 @@ if "page" not in st.session_state:
 
 if "transaction" not in st.session_state:
     st.session_state.transaction = None
+
+if "risk_result" not in st.session_state:
+    st.session_state.risk_result = None
 
 
 # ==================================================
@@ -301,10 +310,7 @@ def show_transfer():
     # Back Button
     # --------------------------------------------------
 
-    if st.button(
-        "← 홈으로",
-        use_container_width=False,
-    ):
+    if st.button("← 홈으로"):
         go_home()
         st.rerun()
 
@@ -316,19 +322,32 @@ def show_transfer():
         """
 <div class="transfer-card">
     <div class="transfer-title">송금하기</div>
-    <div class="transfer-description">
-        송금할 정보를 입력해주세요.
-    </div>
+    <div class="transfer-description">송금할 정보를 입력해주세요.</div>
 </div>
 """,
         unsafe_allow_html=True,
     )
+
+    st.write("")
 
     # --------------------------------------------------
     # Transfer Form
     # --------------------------------------------------
 
     with st.form("transfer_form"):
+
+        scenario_options = {
+            "기관 사칭 보이스피싱": "institution_impersonation",
+            "투자 사기": "investment_fraud",
+            "가족·지인 사칭": "family_impersonation",
+        }
+
+        scenario_name = st.selectbox(
+            "데모 시나리오",
+            list(scenario_options.keys()),
+        )
+
+        scenario_id = scenario_options[scenario_name]
 
         recipient = st.selectbox(
             "수취인",
@@ -372,9 +391,11 @@ def show_transfer():
     if submitted:
 
         if amount <= 0:
+
             st.error("송금 금액을 입력해주세요.")
 
         elif amount > 12_580_000:
+
             st.error("잔액보다 많은 금액을 송금할 수 없습니다.")
 
         else:
@@ -382,11 +403,53 @@ def show_transfer():
             recipient_name = recipient.split(" · ")[0]
             recipient_account = recipient.split(" · ")[1]
 
+            scenario_data = get_scenario(scenario_id)
+
+            # ------------------------------------------
+            # Transaction Data
+            # ------------------------------------------
+
             st.session_state.transaction = {
+                "scenario_id": scenario_id,
+                "scenario_name": scenario_name,
+
                 "recipient_name": recipient_name,
                 "recipient_account": recipient_account,
+
                 "amount": int(amount),
                 "purpose": purpose,
+
+                # --------------------------------------
+                # FDS-like Data
+                # --------------------------------------
+
+                "avg_transaction_amount": scenario_data[
+                    "avg_transaction_amount"
+                ],
+
+                "is_new_recipient": scenario_data[
+                    "is_new_recipient"
+                ],
+
+                "recent_loan": scenario_data[
+                    "recent_loan"
+                ],
+
+                "transaction_count_24h": scenario_data[
+                    "transaction_count_24h"
+                ],
+
+                "transaction_time": scenario_data[
+                    "transaction_time"
+                ],
+
+                "device_change": scenario_data[
+                    "device_change"
+                ],
+
+                "previous_transaction_count": scenario_data[
+                    "previous_transaction_count"
+                ],
             }
 
             st.session_state.page = "confirm"
@@ -399,12 +462,7 @@ def show_transfer():
 
     st.markdown(
         """
-<div class="transfer-summary">
-    <div class="summary-label">출금 계좌</div>
-    <div class="summary-value">
-        AI BANK · 123-456-789012
-    </div>
-</div>
+<div class="transfer-summary"><div class="summary-label">출금 계좌</div><div class="summary-value">AI BANK · 123-456-789012</div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -423,6 +481,7 @@ def show_confirm():
     # --------------------------------------------------
 
     if transaction is None:
+
         st.session_state.page = "home"
         st.rerun()
 
@@ -430,10 +489,8 @@ def show_confirm():
     # Back Button
     # --------------------------------------------------
 
-    if st.button(
-        "← 송금 정보 수정",
-        use_container_width=False,
-    ):
+    if st.button("← 송금 정보 수정"):
+
         st.session_state.page = "transfer"
         st.rerun()
 
@@ -445,9 +502,7 @@ def show_confirm():
         """
 <div class="transfer-card">
     <div class="transfer-title">송금 정보 확인</div>
-    <div class="transfer-description">
-        입력하신 송금 정보를 확인해주세요.
-    </div>
+    <div class="transfer-description">입력하신 송금 정보를 확인해주세요.</div>
 </div>
 """,
         unsafe_allow_html=True,
@@ -459,15 +514,7 @@ def show_confirm():
 
     st.markdown(
         f"""
-<div class="transfer-summary">
-    <div class="summary-label">수취인</div>
-    <div class="summary-value">
-        {transaction["recipient_name"]}
-    </div>
-    <div class="summary-label">
-        {transaction["recipient_account"]}
-    </div>
-</div>
+<div class="transfer-summary"><div class="summary-label">수취인</div><div class="summary-value">{transaction["recipient_name"]}</div><div class="summary-label">{transaction["recipient_account"]}</div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -478,12 +525,7 @@ def show_confirm():
 
     st.markdown(
         f"""
-<div class="transfer-summary">
-    <div class="summary-label">송금 금액</div>
-    <div class="summary-value">
-        ₩{transaction["amount"]:,}
-    </div>
-</div>
+<div class="transfer-summary"><div class="summary-label">송금 금액</div><div class="summary-value">₩{transaction["amount"]:,}</div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -494,12 +536,18 @@ def show_confirm():
 
     st.markdown(
         f"""
-<div class="transfer-summary">
-    <div class="summary-label">송금 목적</div>
-    <div class="summary-value">
-        {transaction["purpose"]}
-    </div>
-</div>
+<div class="transfer-summary"><div class="summary-label">송금 목적</div><div class="summary-value">{transaction["purpose"]}</div></div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # --------------------------------------------------
+    # Scenario
+    # --------------------------------------------------
+
+    st.markdown(
+        f"""
+<div class="transfer-summary"><div class="summary-label">데모 시나리오</div><div class="summary-value">{transaction["scenario_name"]}</div></div>
 """,
         unsafe_allow_html=True,
     )
@@ -507,7 +555,7 @@ def show_confirm():
     st.write("")
 
     # --------------------------------------------------
-    # Next Step
+    # Continue
     # --------------------------------------------------
 
     if st.button(
@@ -515,31 +563,152 @@ def show_confirm():
         use_container_width=True,
         type="primary",
     ):
+
         st.session_state.page = "risk_check"
         st.rerun()
 
 
 # ==================================================
-# Placeholder: Risk Check
+# Risk Check Page
 # ==================================================
 
 def show_risk_check():
 
-    st.title("거래 확인")
+    transaction = st.session_state.transaction
+
+    # --------------------------------------------------
+    # Safety Check
+    # --------------------------------------------------
+
+    if transaction is None:
+
+        st.session_state.page = "home"
+        st.rerun()
+
+    # --------------------------------------------------
+    # Calculate Risk
+    # --------------------------------------------------
+
+    risk_result = calculate_transaction_risk(
+        transaction
+    )
+
+    st.session_state.risk_result = risk_result
+
+    # --------------------------------------------------
+    # Header
+    # --------------------------------------------------
+
+    st.markdown(
+        """
+<div class="risk-card">
+    <div class="transfer-title">거래 위험 분석</div>
+    <div class="transfer-description">
+        AI BANK의 거래 위험 분석 시스템이 송금 정보를 확인하고 있습니다.
+    </div>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # --------------------------------------------------
+    # Transaction Summary
+    # --------------------------------------------------
+
+    st.markdown(
+        f"""
+<div class="transfer-summary"><div class="summary-label">송금 대상</div><div class="summary-value">{transaction["recipient_name"]}</div><div class="summary-label">{transaction["recipient_account"]}</div></div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown(
+        f"""
+<div class="transfer-summary"><div class="summary-label">송금 금액</div><div class="summary-value">₩{transaction["amount"]:,}</div></div>
+""",
+        unsafe_allow_html=True,
+    )
+
+    # --------------------------------------------------
+    # Risk Score
+    # --------------------------------------------------
+
+    st.subheader("Transaction Risk Score")
+
+    st.metric(
+        label="거래 위험 점수",
+        value=f'{risk_result["score"]} / 100',
+    )
+
+    # --------------------------------------------------
+    # Risk Level
+    # --------------------------------------------------
+
+    level = risk_result["level"]
+
+    if level == "CRITICAL":
+
+        st.error("🔴 CRITICAL · 매우 높은 위험")
+
+    elif level == "HIGH":
+
+        st.warning("🟠 HIGH · 높은 위험")
+
+    elif level == "MODERATE":
+
+        st.warning("🟡 MODERATE · 주의 필요")
+
+    else:
+
+        st.success(
+            "🟢 LOW · 현재 탐지된 위험이 낮습니다."
+        )
+
+    # --------------------------------------------------
+    # Risk Signals
+    # --------------------------------------------------
+
+    st.subheader("탐지된 위험 신호")
+
+    if risk_result["signals"]:
+
+        for signal in risk_result["signals"]:
+
+            st.write(
+                f'**{signal["name"]}** '
+                f'+{signal["score"]}점'
+            )
+
+            st.caption(
+                signal["description"]
+            )
+
+    else:
+
+        st.write(
+            "현재 탐지된 주요 위험 신호가 없습니다."
+        )
+
+    # --------------------------------------------------
+    # Temporary Message
+    # --------------------------------------------------
+
+    st.divider()
 
     st.info(
-        "다음 단계에서 Transaction Risk Model이 "
-        "이 위치에 연결됩니다."
+        "다음 단계에서 위험 거래가 탐지되면 "
+        "AI CRACKER가 사용자에게 개입합니다."
     )
 
-    st.write(
-        "현재는 위험 분석을 구현하기 전 단계입니다."
-    )
+    # --------------------------------------------------
+    # Back Home
+    # --------------------------------------------------
 
     if st.button(
         "← 홈으로 돌아가기",
         use_container_width=True,
     ):
+
         go_home()
         st.rerun()
 
